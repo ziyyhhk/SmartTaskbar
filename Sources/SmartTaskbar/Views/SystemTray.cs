@@ -1,4 +1,4 @@
-﻿using System.ComponentModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using Windows.System;
 using Windows.UI.ViewManagement;
@@ -11,6 +11,7 @@ namespace SmartTaskbar
         private const int TrayTolerance = 4;
         private readonly ToolStripMenuItem _animationInBar;
         private readonly ToolStripMenuItem _autoMode;
+        private readonly ToolStripMenuItem _settings;
 
         private readonly Container _container = new();
         private readonly ContextMenuStrip _contextMenuStrip;
@@ -20,6 +21,7 @@ namespace SmartTaskbar
         private readonly NotifyIcon _notifyIcon;
         private readonly ResourceCulture _resourceCulture = new();
         private readonly ToolStripMenuItem _showBarOnExit;
+        private SettingsForm? _settingsForm;
 
         public SystemTray()
         {
@@ -30,6 +32,10 @@ namespace SmartTaskbar
             var font = new Font("Segoe UI", 10.5F);
 
             var about = new ToolStripMenuItem(_resourceCulture.GetString(LangName.About))
+            {
+                Font = font
+            };
+            _settings = new ToolStripMenuItem("Settings")
             {
                 Font = font
             };
@@ -58,6 +64,8 @@ namespace SmartTaskbar
             _contextMenuStrip.Items.AddRange(new ToolStripItem[]
             {
                 about,
+                _settings,
+                new ToolStripSeparator(),
                 _animationInBar,
                 new ToolStripSeparator(),
                 _autoMode,
@@ -78,24 +86,41 @@ namespace SmartTaskbar
             #region Load Event
 
             about.Click += AboutOnClick;
-
+            _settings.Click += SettingsOnClick;
             _animationInBar.Click += AnimationInBarOnClick;
-
             _showBarOnExit.Click += ShowBarOnExitOnClick;
-
             _autoMode.Click += AutoModeOnClick;
-
             _exit.Click += ExitOnClick;
 
             _notifyIcon.MouseClick += NotifyIconOnMouseClick;
-
             _notifyIcon.MouseDoubleClick += NotifyIconOnMouseDoubleClick;
 
             Fun.UiSettings.ColorValuesChanged += UISettingsOnColorValuesChanged;
-
             Application.ApplicationExit += Application_ApplicationExit;
 
             #endregion
+
+            // Show settings GUI on first launch
+            ShowSettings();
+        }
+
+        private void SettingsOnClick(object? sender, EventArgs e) => ShowSettings();
+
+        private void ShowSettings()
+        {
+            if (_settingsForm is null || _settingsForm.IsDisposed)
+            {
+                _settingsForm = new SettingsForm();
+            }
+
+            if (_settingsForm.Visible)
+            {
+                _settingsForm.Activate();
+                return;
+            }
+
+            _settingsForm.Show();
+            _settingsForm.Activate();
         }
 
         private void AboutOnClick(object? sender, EventArgs e)
@@ -106,10 +131,8 @@ namespace SmartTaskbar
 
         private void NotifyIconOnMouseDoubleClick(object? s, MouseEventArgs e)
         {
-            UserSettings.AutoModeType = AutoModeType.None;
-
-            Fun.ChangeAutoHide();
-            HideBar();
+            // Open settings GUI on double-click
+            ShowSettings();
         }
 
         private void NotifyIconOnMouseClick(object? s, MouseEventArgs e)
