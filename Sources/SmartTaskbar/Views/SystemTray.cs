@@ -22,6 +22,7 @@ namespace SmartTaskbar
         private readonly ResourceCulture _resourceCulture = new();
         private readonly ToolStripMenuItem _showBarOnExit;
         private SettingsForm? _settingsForm;
+        private readonly TaskbarCenterer _centerer = new();
 
         public SystemTray(bool showSettingsOnLaunch = true)
         {
@@ -100,6 +101,9 @@ namespace SmartTaskbar
 
             #endregion
 
+            // Start icon centering if it was enabled last time
+            ApplyCentering();
+
             // Open settings GUI on launch (after tray is ready), unless started with --tray
             if (showSettingsOnLaunch)
             {
@@ -122,7 +126,7 @@ namespace SmartTaskbar
             {
                 if (_settingsForm is null || _settingsForm.IsDisposed)
                 {
-                    _settingsForm = new SettingsForm(ApplyEnabled, ApplyAutoMode);
+                    _settingsForm = new SettingsForm(new TaskbarActions(ApplyEnabled, ApplyAutoMode, SetCenter, ApplyCentering));
                 }
 
                 if (_settingsForm.Visible)
@@ -233,6 +237,7 @@ namespace SmartTaskbar
 
         private void ExitOnClick(object? s, EventArgs e)
         {
+            _centerer.Stop();   // put the taskbar icons back where they were
             if (UserSettings.ShowTaskbarWhenExit)
                 Fun.CancelAutoHide();
             else
@@ -280,6 +285,38 @@ namespace SmartTaskbar
 
             if (!enabled)
                 Fun.CancelAutoHide();
+
+            ApplyCentering();
+        }
+
+        /// <summary>
+        ///     Centering switch. Windows 11 uses its native alignment setting; Windows 10 uses the centering engine.
+        /// </summary>
+        private void SetCenter(bool enabled)
+        {
+            if (TaskbarAlignmentHelper.IsSupported)
+                TaskbarAlignmentHelper.SetCentered(enabled);
+            else
+                UserSettings.CenterIcons = enabled;
+
+            ApplyCentering();
+        }
+
+        /// <summary>
+        ///     Starts or stops the Windows 10 centering engine to match the settings.
+        /// </summary>
+        private void ApplyCentering()
+        {
+            bool wanted = !TaskbarAlignmentHelper.IsSupported && UserSettings.Enabled && UserSettings.CenterIcons;
+
+            if (!wanted)
+            {
+                _centerer.Stop();
+                return;
+            }
+
+            _centerer.Configure(UserSettings.CenterEasing, UserSettings.CenterDurationMs);
+            _centerer.Start();
         }
 
         private void AnimationInBarOnClick(object? s, EventArgs e)

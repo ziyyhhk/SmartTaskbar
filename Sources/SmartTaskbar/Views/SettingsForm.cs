@@ -67,8 +67,7 @@ namespace SmartTaskbar
 
         private static readonly string[] TabNames = { "Main", "Animation", "Style", "Startup" };
 
-        private readonly Action<bool> _setEnabled;
-        private readonly Action<bool> _setAutoMode;
+        private readonly TaskbarActions _actions;
         private readonly List<Action> _pageLayouts = new();
         private readonly Label _titleLabel;
         private readonly Label _lblStatus;
@@ -88,13 +87,12 @@ namespace SmartTaskbar
         private ToggleSwitch _togCenter = null!;
         private ToggleSwitch _togAnimation = null!;
         private ToggleSwitch _togShowOnExit = null!;
+        private ComboBox _easingCombo = null!;
+        private ComboBox _speedCombo = null!;
 
-        /// <param name="setEnabled">Applies the master switch (tray owns the taskbar side effects).</param>
-        /// <param name="setAutoMode">Applies Auto Mode the same way the tray menu does.</param>
-        public SettingsForm(Action<bool> setEnabled, Action<bool> setAutoMode)
+        public SettingsForm(TaskbarActions actions)
         {
-            _setEnabled = setEnabled;
-            _setAutoMode = setAutoMode;
+            _actions = actions;
 
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -185,9 +183,8 @@ namespace SmartTaskbar
             _togCenter = card.AddRow(
                 "Center taskbar icons",
                 TaskbarAlignmentHelper.IsSupported
-                    ? "Move the Start button and app icons to the middle of the taskbar."
-                    : "Windows 11 only. Windows 10 always aligns taskbar icons to the left.");
-            _togCenter.Enabled = TaskbarAlignmentHelper.IsSupported;
+                    ? "Move the Start button and app icons to the middle of the taskbar (Windows 11)."
+                    : "Move the taskbar icons to the middle of the screen with the animation picked on the Animation tab. Experimental on Windows 10.");
 
             _togEnabled.CheckedChanged += (_, _) => OnEnabledToggled(_togEnabled.Checked);
             _togAutoMain.CheckedChanged += (_, _) => OnAutoModeToggled(_togAutoMain.Checked);
@@ -210,10 +207,29 @@ namespace SmartTaskbar
             _togAnimation = card.AddRow(
                 "Taskbar animation",
                 "Turn the Windows taskbar animation effects on or off.");
-            _togAnimation.CheckedChanged += (_, _) => OnAnimationToggled(_togAnimation.Checked);
+            _easingCombo = card.AddChoiceRow(
+                "Centering easing",
+                "The curve the icons follow when they move to the middle.",
+                CenterOptions.EasingNames,
+                Array.IndexOf(CenterOptions.Easings, CenterEasing.EaseOut));
+            _speedCombo = card.AddChoiceRow(
+                "Centering speed",
+                "How long the centering animation takes.",
+                CenterOptions.SpeedNames,
+                1);
 
-            var info = new InfoBar(
-                "Windows only lets apps turn the taskbar animation on or off. Choosing an easing curve (ease in, ease out, bounce) needs a hook into Explorer, which this version does not include.");
+            _togAnimation.CheckedChanged += (_, _) => OnAnimationToggled(_togAnimation.Checked);
+            _easingCombo.SelectedIndexChanged += (_, _) => OnEasingChanged(_easingCombo.SelectedIndex);
+            _speedCombo.SelectedIndexChanged += (_, _) => OnSpeedChanged(_speedCombo.SelectedIndex);
+
+            // Windows 11 centers icons with its own animation, so the custom options only apply on Windows 10.
+            bool windows10 = !TaskbarAlignmentHelper.IsSupported;
+            _easingCombo.Enabled = windows10;
+            _speedCombo.Enabled = windows10;
+
+            var info = new InfoBar(windows10
+                ? "Easing and speed apply to the icon centering animation on Windows 10. The taskbar animation switch controls Windows' own animations."
+                : "Windows 11 centers icons with its own animation, so the easing and speed options only apply on Windows 10.");
             page.Controls.Add(info);
             RegisterPageLayout(page, card, info);
             return page;
@@ -525,6 +541,7 @@ namespace SmartTaskbar
             base.OnPaint(e);
 
             Graphics g = e.Graphics;
+
             var icon = Icon;
             if (icon is not null)
                 g.DrawIcon(icon, new Rectangle(12, (CaptionHeight - 16) / 2, 16, 16));
@@ -575,7 +592,7 @@ namespace SmartTaskbar
         {
             if (_suppress) return;
 
-            _setEnabled(enabled);
+            _actions.SetEnabled(enabled);
             SyncFromSettings();
         }
 
@@ -583,7 +600,7 @@ namespace SmartTaskbar
         {
             if (_suppress) return;
 
-            _setAutoMode(enabled);
+            _actions.SetAutoMode(enabled);
             SyncFromSettings();
         }
 
@@ -599,7 +616,7 @@ namespace SmartTaskbar
         {
             if (_suppress) return;
 
-            TaskbarAlignmentHelper.SetCentered(enabled);
+            _actions.SetCenter(enabled);
             SyncFromSettings();
         }
 
@@ -611,6 +628,22 @@ namespace SmartTaskbar
                 Fun.ChangeTaskbarAnimation();
 
             SyncFromSettings();
+        }
+
+        private void OnEasingChanged(int index)
+        {
+            if (_suppress || index < 0 || index >= CenterOptions.Easings.Length) return;
+
+            UserSettings.CenterEasing = CenterOptions.Easings[index];
+            _actions.ApplyCenterOptions();
+        }
+
+        private void OnSpeedChanged(int index)
+        {
+            if (_suppress || index < 0 || index >= CenterOptions.SpeedMs.Length) return;
+
+            UserSettings.CenterDurationMs = CenterOptions.SpeedMs[index];
+            _actions.ApplyCenterOptions();
         }
 
         private void OnShowOnExitToggled(bool enabled)
@@ -633,9 +666,14 @@ namespace SmartTaskbar
                 bool enabled = UserSettings.Enabled;
                 bool autoOn = UserSettings.AutoModeType == AutoModeType.Auto;
                 bool startupOn = StartupHelper.IsRunAtStartup();
-                bool centered = TaskbarAlignmentHelper.IsCentered();
+                bool centered = TaskbarAlignmentHelper.IsSupported
+                    ? TaskbarAlignmentHelper.IsCentered()
+                    : UserSettings.CenterIcons;
                 bool animationOn = Fun.IsEnableTaskbarAnimation();
                 bool showOnExit = UserSettings.ShowTaskbarWhenExit;
+
+                int easingIndex = Array.IndexOf(CenterOptions.Easings, UserSettings.CenterEasing);
+                int speedIndex = Array.IndexOf(CenterOptions.SpeedMs, UserSettings.CenterDurationMs);
 
                 WithSuppressed(() =>
                 {
@@ -647,6 +685,9 @@ namespace SmartTaskbar
                     _togCenter.Checked = centered;
                     _togAnimation.Checked = animationOn;
                     _togShowOnExit.Checked = showOnExit;
+
+                    if (easingIndex >= 0) _easingCombo.SelectedIndex = easingIndex;
+                    if (speedIndex >= 0) _speedCombo.SelectedIndex = speedIndex;
                 });
 
                 UpdateStatus(enabled, autoOn);
