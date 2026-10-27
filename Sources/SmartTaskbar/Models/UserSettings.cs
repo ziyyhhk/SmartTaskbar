@@ -1,26 +1,40 @@
-﻿using Windows.Storage;
+using Microsoft.Win32;
 
 namespace SmartTaskbar
 {
     public class UserSettings
     {
+        private const string RegPath = @"Software\SmartTaskbar";
         private static UserConfiguration _userConfiguration;
 
-        /// <summary>
-        ///     ctor
-        /// </summary>
         static UserSettings()
         {
-            var autoMode =
-                ApplicationData.Current.LocalSettings.Values[nameof(UserConfiguration.AutoModeType)] as string;
-
-            _userConfiguration = new UserConfiguration
+            try
             {
-                AutoModeType = autoMode == nameof(AutoModeType.None) ? AutoModeType.None : AutoModeType.Auto,
-                ShowTaskbarWhenExit =
-                    ApplicationData.Current.LocalSettings.Values[nameof(UserConfiguration.ShowTaskbarWhenExit)] as bool?
-                    ?? true
-            };
+                using var key = Registry.CurrentUser.OpenSubKey(RegPath, false);
+                var autoMode = key?.GetValue(nameof(UserConfiguration.AutoModeType)) as string;
+                var showExit = key?.GetValue(nameof(UserConfiguration.ShowTaskbarWhenExit));
+
+                _userConfiguration = new UserConfiguration
+                {
+                    AutoModeType = autoMode == nameof(AutoModeType.None)
+                        ? AutoModeType.None
+                        : AutoModeType.Auto,
+                    ShowTaskbarWhenExit = showExit is int i
+                        ? i != 0
+                        : showExit is bool b
+                            ? b
+                            : true
+                };
+            }
+            catch
+            {
+                _userConfiguration = new UserConfiguration
+                {
+                    AutoModeType = AutoModeType.Auto,
+                    ShowTaskbarWhenExit = true
+                };
+            }
         }
 
         public static AutoModeType AutoModeType
@@ -32,7 +46,7 @@ namespace SmartTaskbar
                     return;
 
                 _userConfiguration.AutoModeType = value;
-                ApplicationData.Current.LocalSettings.Values[nameof(UserConfiguration.AutoModeType)] = value.ToString();
+                WriteValue(nameof(UserConfiguration.AutoModeType), value.ToString());
             }
         }
 
@@ -45,7 +59,20 @@ namespace SmartTaskbar
                     return;
 
                 _userConfiguration.ShowTaskbarWhenExit = value;
-                ApplicationData.Current.LocalSettings.Values[nameof(UserConfiguration.ShowTaskbarWhenExit)] = value;
+                WriteValue(nameof(UserConfiguration.ShowTaskbarWhenExit), value ? 1 : 0);
+            }
+        }
+
+        private static void WriteValue(string name, object value)
+        {
+            try
+            {
+                using var key = Registry.CurrentUser.CreateSubKey(RegPath);
+                key?.SetValue(name, value);
+            }
+            catch
+            {
+                // ignore write failures
             }
         }
     }
