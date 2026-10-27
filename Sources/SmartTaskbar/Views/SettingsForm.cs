@@ -525,7 +525,9 @@ namespace SmartTaskbar
             base.OnPaint(e);
 
             Graphics g = e.Graphics;
-            Icon?.Draw(g, new Rectangle(12, (CaptionHeight - 16) / 2, 16, 16));
+            var icon = Icon;
+            if (icon is not null)
+                g.DrawIcon(icon, new Rectangle(12, (CaptionHeight - 16) / 2, 16, 16));
 
             TextRenderer.DrawText(g, "SmartTaskbar", Win11Theme.CaptionFont,
                                   new Rectangle(36, 0, 240, CaptionHeight),
