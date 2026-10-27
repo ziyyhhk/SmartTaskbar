@@ -100,27 +100,47 @@ namespace SmartTaskbar
 
             #endregion
 
-            // Show settings GUI on first launch
-            ShowSettings();
+            // Open settings GUI on launch (after tray is ready)
+            try
+            {
+                ShowSettings();
+            }
+            catch
+            {
+                // Never crash the tray if the form fails
+            }
         }
 
         private void SettingsOnClick(object? sender, EventArgs e) => ShowSettings();
 
         private void ShowSettings()
         {
-            if (_settingsForm is null || _settingsForm.IsDisposed)
+            try
             {
-                _settingsForm = new SettingsForm();
-            }
+                if (_settingsForm is null || _settingsForm.IsDisposed)
+                {
+                    _settingsForm = new SettingsForm();
+                }
 
-            if (_settingsForm.Visible)
-            {
+                if (_settingsForm.Visible)
+                {
+                    _settingsForm.BringToFront();
+                    _settingsForm.Activate();
+                    return;
+                }
+
+                _settingsForm.Show();
+                _settingsForm.BringToFront();
                 _settingsForm.Activate();
-                return;
             }
-
-            _settingsForm.Show();
-            _settingsForm.Activate();
+            catch (Exception ex)
+            {
+                MessageBox.Show(
+                    "Failed to open settings window:\n" + ex.Message,
+                    "SmartTaskbar",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Error);
+            }
         }
 
         private void AboutOnClick(object? sender, EventArgs e)
@@ -131,7 +151,6 @@ namespace SmartTaskbar
 
         private void NotifyIconOnMouseDoubleClick(object? s, MouseEventArgs e)
         {
-            // Open settings GUI on double-click
             ShowSettings();
         }
 
@@ -237,7 +256,6 @@ namespace SmartTaskbar
 
         private static async void Application_ApplicationExit(object? sender, EventArgs e)
         {
-            // Weird bug.
             await Task.Delay(500);
             Process.GetCurrentProcess().Kill();
         }
