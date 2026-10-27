@@ -1,120 +1,186 @@
 using System.Drawing.Drawing2D;
-using Microsoft.Win32;
-using SmartTaskbar.Languages;
 
 namespace SmartTaskbar
 {
     internal sealed class SettingsForm : Form
     {
-        private readonly Panel _contentPanel;
+        private readonly Panel _tabBar;
         private readonly Button[] _tabButtons;
         private readonly Panel[] _pages;
         private int _activeTab;
 
-        // Animation page controls
+        // Main
+        private Label _lblStatus = null!;
+        private CheckBox _chkMainAutoMode = null!;
+        private CheckBox _chkMainStartup = null!;
+
+        // Animation
         private CheckBox _chkTaskbarAnimation = null!;
 
-        // Style page controls
+        // Style
         private CheckBox _chkAutoMode = null!;
         private CheckBox _chkShowBarOnExit = null!;
 
-        // Startup page controls
+        // Startup
         private CheckBox _chkRunAtStartup = null!;
 
         private static readonly Color BgDark = Color.FromArgb(32, 32, 32);
         private static readonly Color CardBg = Color.FromArgb(45, 45, 45);
+        private static readonly Color TabBarBg = Color.FromArgb(25, 25, 25);
         private static readonly Color Accent = Color.FromArgb(0, 120, 212);
         private static readonly Color TextPrimary = Color.FromArgb(240, 240, 240);
         private static readonly Color TextSecondary = Color.FromArgb(180, 180, 180);
-        private static readonly Color SidebarBg = Color.FromArgb(25, 25, 25);
+
+        private static readonly string[] TabNames = { "Main", "Animation", "Style", "Startup" };
 
         public SettingsForm()
         {
-            Text = "SmartTaskbar Settings";
+            Text = "SmartTaskbar";
             FormBorderStyle = FormBorderStyle.FixedSingle;
             MaximizeBox = false;
             MinimizeBox = true;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(720, 480);
+            ClientSize = new Size(680, 460);
             BackColor = BgDark;
             Font = new Font("Segoe UI", 9.75F);
             ShowInTaskbar = true;
-            Icon = Fun.IsLightTheme() ? IconResource.Logo_Black : IconResource.Logo_White;
-
-            // Sidebar
-            var sidebar = new Panel
+            try
             {
-                Dock = DockStyle.Left,
-                Width = 180,
-                BackColor = SidebarBg
+                Icon = Fun.IsLightTheme() ? IconResource.Logo_Black : IconResource.Logo_White;
+            }
+            catch
+            {
+                // Icon optional
+            }
+
+            // ===== Top tab bar =====
+            _tabBar = new Panel
+            {
+                Dock = DockStyle.Top,
+                Height = 48,
+                BackColor = TabBarBg
             };
 
-            var titleLabel = new Label
-            {
-                Text = "SmartTaskbar",
-                Font = new Font("Segoe UI Semibold", 12F),
-                ForeColor = TextPrimary,
-                Location = new Point(16, 20),
-                AutoSize = true
-            };
-            sidebar.Controls.Add(titleLabel);
-
-            _tabButtons = new Button[3];
-            string[] tabNames = { "Animation", "Style", "Startup" };
-            for (int i = 0; i < 3; i++)
+            _tabButtons = new Button[TabNames.Length];
+            int tabWidth = 110;
+            int startX = 12;
+            for (int i = 0; i < TabNames.Length; i++)
             {
                 var btn = new Button
                 {
-                    Text = "  " + tabNames[i],
+                    Text = TabNames[i],
                     FlatStyle = FlatStyle.Flat,
                     FlatAppearance = { BorderSize = 0, MouseOverBackColor = Color.FromArgb(50, 50, 50) },
                     BackColor = i == 0 ? CardBg : Color.Transparent,
                     ForeColor = TextPrimary,
-                    Font = new Font("Segoe UI", 10F),
-                    TextAlign = ContentAlignment.MiddleLeft,
-                    Size = new Size(164, 40),
-                    Location = new Point(8, 70 + i * 48),
+                    Font = new Font("Segoe UI Semibold", 10F),
+                    Size = new Size(tabWidth, 36),
+                    Location = new Point(startX + i * (tabWidth + 4), 6),
                     Cursor = Cursors.Hand,
                     Tag = i
                 };
                 btn.Click += TabButton_Click;
                 _tabButtons[i] = btn;
-                sidebar.Controls.Add(btn);
+                _tabBar.Controls.Add(btn);
             }
 
-            // Content area
-            _contentPanel = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = BgDark,
-                Padding = new Padding(24)
-            };
-
-            _pages = new Panel[3];
-            _pages[0] = BuildAnimationPage();
-            _pages[1] = BuildStylePage();
-            _pages[2] = BuildStartupPage();
+            // ===== Content pages =====
+            _pages = new Panel[TabNames.Length];
+            _pages[0] = BuildMainPage();
+            _pages[1] = BuildAnimationPage();
+            _pages[2] = BuildStylePage();
+            _pages[3] = BuildStartupPage();
 
             foreach (var page in _pages)
             {
                 page.Dock = DockStyle.Fill;
                 page.Visible = false;
-                _contentPanel.Controls.Add(page);
+                page.Padding = new Padding(24);
+                Controls.Add(page);
             }
             _pages[0].Visible = true;
 
-            Controls.Add(_contentPanel);
-            Controls.Add(sidebar);
+            Controls.Add(_tabBar); // add last so it docks on top
 
             LoadSettings();
             FormClosing += SettingsForm_FormClosing;
+        }
+
+        private Panel BuildMainPage()
+        {
+            var page = new Panel { BackColor = BgDark };
+
+            var card = CreateCard(0, 0, 620, 200);
+            page.Controls.Add(card);
+
+            var header = new Label
+            {
+                Text = "SmartTaskbar",
+                Font = new Font("Segoe UI Semibold", 14F),
+                ForeColor = TextPrimary,
+                Location = new Point(20, 16),
+                AutoSize = true
+            };
+            card.Controls.Add(header);
+
+            _lblStatus = new Label
+            {
+                Text = "Status: Running",
+                ForeColor = TextSecondary,
+                Location = new Point(20, 48),
+                AutoSize = true
+            };
+            card.Controls.Add(_lblStatus);
+
+            _chkMainAutoMode = new CheckBox
+            {
+                Text = "Enable Auto Mode",
+                ForeColor = TextPrimary,
+                Location = new Point(20, 90),
+                AutoSize = true,
+                Cursor = Cursors.Hand
+            };
+            _chkMainAutoMode.CheckedChanged += (s, e) =>
+            {
+                UserSettings.AutoModeType = _chkMainAutoMode.Checked ? AutoModeType.Auto : AutoModeType.None;
+                if (_chkAutoMode != null)
+                    _chkAutoMode.Checked = _chkMainAutoMode.Checked;
+            };
+            card.Controls.Add(_chkMainAutoMode);
+
+            _chkMainStartup = new CheckBox
+            {
+                Text = "Run at Windows startup",
+                ForeColor = TextPrimary,
+                Location = new Point(20, 125),
+                AutoSize = true,
+                Cursor = Cursors.Hand
+            };
+            _chkMainStartup.CheckedChanged += (s, e) =>
+            {
+                StartupHelper.SetRunAtStartup(_chkMainStartup.Checked);
+                if (_chkRunAtStartup != null)
+                    _chkRunAtStartup.Checked = _chkMainStartup.Checked;
+            };
+            card.Controls.Add(_chkMainStartup);
+
+            var tip = new Label
+            {
+                Text = "Use the tabs above for more options. Closing this window keeps SmartTaskbar in the tray.",
+                ForeColor = TextSecondary,
+                Location = new Point(20, 165),
+                Size = new Size(560, 24)
+            };
+            card.Controls.Add(tip);
+
+            return page;
         }
 
         private Panel BuildAnimationPage()
         {
             var page = new Panel { BackColor = BgDark };
 
-            var card = CreateCard(0, 0, 480, 160);
+            var card = CreateCard(0, 0, 620, 160);
             page.Controls.Add(card);
 
             var header = new Label
@@ -132,7 +198,7 @@ namespace SmartTaskbar
                 Text = "Enable or disable the system taskbar animation effect.",
                 ForeColor = TextSecondary,
                 Location = new Point(20, 48),
-                Size = new Size(430, 36)
+                Size = new Size(560, 36)
             };
             card.Controls.Add(desc);
 
@@ -146,7 +212,6 @@ namespace SmartTaskbar
             };
             _chkTaskbarAnimation.CheckedChanged += (s, e) =>
             {
-                // Only apply when user changes it
                 if (_chkTaskbarAnimation.Checked != Fun.IsEnableTaskbarAnimation())
                     Fun.ChangeTaskbarAnimation();
             };
@@ -159,7 +224,7 @@ namespace SmartTaskbar
         {
             var page = new Panel { BackColor = BgDark };
 
-            var card1 = CreateCard(0, 0, 480, 140);
+            var card1 = CreateCard(0, 0, 620, 140);
             page.Controls.Add(card1);
 
             var h1 = new Label
@@ -177,7 +242,7 @@ namespace SmartTaskbar
                 Text = "Automatically hide the taskbar when the focused window intersects it.",
                 ForeColor = TextSecondary,
                 Location = new Point(20, 48),
-                Size = new Size(430, 36)
+                Size = new Size(560, 36)
             };
             card1.Controls.Add(d1);
 
@@ -192,10 +257,12 @@ namespace SmartTaskbar
             _chkAutoMode.CheckedChanged += (s, e) =>
             {
                 UserSettings.AutoModeType = _chkAutoMode.Checked ? AutoModeType.Auto : AutoModeType.None;
+                if (_chkMainAutoMode != null)
+                    _chkMainAutoMode.Checked = _chkAutoMode.Checked;
             };
             card1.Controls.Add(_chkAutoMode);
 
-            var card2 = CreateCard(0, 160, 480, 140);
+            var card2 = CreateCard(0, 160, 620, 140);
             page.Controls.Add(card2);
 
             var h2 = new Label
@@ -213,7 +280,7 @@ namespace SmartTaskbar
                 Text = "Show the taskbar again when SmartTaskbar exits.",
                 ForeColor = TextSecondary,
                 Location = new Point(20, 48),
-                Size = new Size(430, 36)
+                Size = new Size(560, 36)
             };
             card2.Controls.Add(d2);
 
@@ -238,7 +305,7 @@ namespace SmartTaskbar
         {
             var page = new Panel { BackColor = BgDark };
 
-            var card = CreateCard(0, 0, 480, 160);
+            var card = CreateCard(0, 0, 620, 180);
             page.Controls.Add(card);
 
             var header = new Label
@@ -253,10 +320,10 @@ namespace SmartTaskbar
 
             var desc = new Label
             {
-                Text = "Start SmartTaskbar automatically when you sign in to Windows.",
+                Text = "Start SmartTaskbar automatically when you sign in to Windows.\nThis writes to the current-user Run registry key (no admin required).",
                 ForeColor = TextSecondary,
                 Location = new Point(20, 48),
-                Size = new Size(430, 36)
+                Size = new Size(560, 50)
             };
             card.Controls.Add(desc);
 
@@ -264,13 +331,15 @@ namespace SmartTaskbar
             {
                 Text = "Run at Windows startup",
                 ForeColor = TextPrimary,
-                Location = new Point(20, 100),
+                Location = new Point(20, 115),
                 AutoSize = true,
                 Cursor = Cursors.Hand
             };
             _chkRunAtStartup.CheckedChanged += (s, e) =>
             {
                 StartupHelper.SetRunAtStartup(_chkRunAtStartup.Checked);
+                if (_chkMainStartup != null)
+                    _chkMainStartup.Checked = _chkRunAtStartup.Checked;
             };
             card.Controls.Add(_chkRunAtStartup);
 
@@ -285,7 +354,6 @@ namespace SmartTaskbar
                 Size = new Size(w, h),
                 BackColor = CardBg
             };
-            // Rounded look via region (simple)
             card.Paint += (s, e) =>
             {
                 e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
@@ -323,15 +391,31 @@ namespace SmartTaskbar
 
         private void LoadSettings()
         {
-            _chkTaskbarAnimation.Checked = Fun.IsEnableTaskbarAnimation();
-            _chkAutoMode.Checked = UserSettings.AutoModeType == AutoModeType.Auto;
-            _chkShowBarOnExit.Checked = UserSettings.ShowTaskbarWhenExit;
-            _chkRunAtStartup.Checked = StartupHelper.IsRunAtStartup();
+            try
+            {
+                bool auto = UserSettings.AutoModeType == AutoModeType.Auto;
+                bool showExit = UserSettings.ShowTaskbarWhenExit;
+                bool startup = StartupHelper.IsRunAtStartup();
+                bool anim = Fun.IsEnableTaskbarAnimation();
+
+                if (_chkMainAutoMode != null) _chkMainAutoMode.Checked = auto;
+                if (_chkMainStartup != null) _chkMainStartup.Checked = startup;
+                if (_chkTaskbarAnimation != null) _chkTaskbarAnimation.Checked = anim;
+                if (_chkAutoMode != null) _chkAutoMode.Checked = auto;
+                if (_chkShowBarOnExit != null) _chkShowBarOnExit.Checked = showExit;
+                if (_chkRunAtStartup != null) _chkRunAtStartup.Checked = startup;
+
+                if (_lblStatus != null)
+                    _lblStatus.Text = auto ? "Status: Auto Mode ON" : "Status: Auto Mode OFF";
+            }
+            catch
+            {
+                // Keep UI alive even if settings fail
+            }
         }
 
         private void SettingsForm_FormClosing(object? sender, FormClosingEventArgs e)
         {
-            // Keep the app running in tray; just hide the form
             if (e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
@@ -342,8 +426,9 @@ namespace SmartTaskbar
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            // Refresh values every time the window is shown
             LoadSettings();
+            BringToFront();
+            Activate();
         }
     }
 }
