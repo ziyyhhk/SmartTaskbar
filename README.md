@@ -11,14 +11,22 @@ SmartTaskbar  <img src="https://github.com/ChanpleCai/SmartTaskbar/blob/main/log
 
 * SmartTaskbar is a lightweight utility which can automatically switch the display state of the Windows Taskbar.
 
+**This fork adds a modern dark settings GUI** with three tabs: **Animation**, **Style**, and **Startup**.  
+The GUI opens on launch and can also be opened from the tray menu or by double-clicking the tray icon.
+
 Features
 -----
 
+#### Settings GUI (new)
+* **Animation** – Toggle taskbar animation
+* **Style** – Auto Mode + Show taskbar on exit
+* **Startup** – Run at Windows startup
+
 #### Auto Mode
 
-* In the Auto Mode, SmartTaskbar will set the Taskbar to hide when When the focused window and the taskbar intersect<sup>[[1]](#footnote)</sup>.
+* In the Auto Mode, SmartTaskbar will set the Taskbar to hide when the focused window and the taskbar intersect<sup>[[1]](#footnote)</sup>.
   
-* Double-click the tray icon to switch the display status of the taskbar between Show or Auto-Hide.
+* Double-click the tray icon to open the settings window.
 
 Known Issues
 ----  
@@ -37,6 +45,7 @@ Known Issues
 Build
 -----
 * Visual Studio 2022.
+* Or use the GitHub Actions workflow (`.github/workflows/build.yml`) which produces a self-contained `SmartTaskbar.exe`.
 
 Notice
 ------
