@@ -36,9 +36,20 @@ jobs:
             -p:IncludeNativeLibrariesForSelfExtract=true `
             -o ./publish
 
-      - name: Upload artifact
+      - name: Create zip
+        run: |
+          Compress-Archive -Path ./publish/SmartTaskbar.exe -DestinationPath ./SmartTaskbar-win-x64.zip -Force
+
+      - name: Upload exe artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SmartTaskbar-win-x64
+          name: SmartTaskbar-win-x64-exe
           path: ./publish/SmartTaskbar.exe
+          if-no-files-found: error
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmartTaskbar-win-x64-zip
+          path: ./SmartTaskbar-win-x64.zip
           if-no-files-found: error
