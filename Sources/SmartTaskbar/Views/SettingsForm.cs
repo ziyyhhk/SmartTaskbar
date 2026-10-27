@@ -4,66 +4,111 @@ using System.Runtime.InteropServices;
 namespace SmartTaskbar
 {
     /// <summary>
-    ///     Settings window styled after Windows 11 Settings: dark surface, rounded cards,
-    ///     toggle switches and top tabs with an accent underline.
-    ///     Closing the window only hides it, so the tray icon keeps running.
+    ///     Settings window in the Windows 11 Settings style. It uses a borderless window with its own
+    ///     dark title bar (so it matches the app on Windows 10 too), resizes and maximizes normally,
+    ///     and hides instead of closing so the tray keeps running.
     /// </summary>
     internal sealed class SettingsForm : Form
     {
+        private enum CaptionButton { None, Minimize, Maximize, Close }
+
+        // ----- Layout -----
         private const int Inset = 32;
-        private const int TabTop = 96;
+        private const int CaptionHeight = 32;
+        private const int CaptionButtonWidth = 46;
+        private const int TitleTop = CaptionHeight + 16;
+        private const int StatusTop = TitleTop + 42;
+        private const int TabTop = CaptionHeight + 92;
         private const int TabHeight = 44;
         private const int PageTop = TabTop + TabHeight;
         private const int CardTop = 40;
         private const int CardGap = 16;
 
-        // DWM attributes (Windows 10 1809+ / Windows 11). Unsupported ones are ignored.
+        // ----- Win32 -----
+        private const int WmNcCalcSize = 0x0083;
+        private const int WmNcHitTest = 0x0084;
+        private const int WmNcMouseMove = 0x00A0;
+        private const int WmNcLButtonDblClk = 0x00A3;
+
+        private const int HtClient = 1;
+        private const int HtCaption = 2;
+        private const int HtLeft = 10;
+        private const int HtRight = 11;
+        private const int HtTop = 12;
+        private const int HtTopLeft = 13;
+        private const int HtTopRight = 14;
+        private const int HtBottom = 15;
+        private const int HtBottomLeft = 16;
+        private const int HtBottomRight = 17;
+
+        private const int ResizeBorder = 6;
+        private const int WsThickFrame = 0x00040000;
+        private const int WsMinimizeBox = 0x00020000;
+        private const int WsMaximizeBox = 0x00010000;
+        private const int CsDropShadow = 0x00020000;
+
+        // DWM attributes (Windows 10 1809+ and Windows 11). Unsupported ones are ignored.
         private const int DwmwaUseImmersiveDarkMode = 20;
         private const int DwmwaUseImmersiveDarkModeLegacy = 19;
         private const int DwmwaWindowCornerPreference = 33;
-        private const int DwmwaCaptionColor = 35;
         private const int DwmwcpRound = 2;
 
-        private static readonly string[] TabNames = { "Main", "Animation", "Style", "Startup" };
-
-        private readonly Action<bool> _setAutoMode;
-        private readonly Label _lblStatus;
-        private readonly TabStrip _tabs;
-        private readonly Panel[] _pages;
-
-        private ToggleSwitch _togAutoMain = null!;
-        private ToggleSwitch _togAutoStyle = null!;
-        private ToggleSwitch _togStartupMain = null!;
-        private ToggleSwitch _togStartupPage = null!;
-        private ToggleSwitch _togAnimation = null!;
-        private ToggleSwitch _togShowOnExit = null!;
-
-        // True while the form itself is changing toggle state, so handlers do not write back.
-        private bool _suppress;
+        [StructLayout(LayoutKind.Sequential)]
+        private struct NativeRect
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
 
         [DllImport("dwmapi.dll")]
         private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
-        /// <param name="setAutoMode">
-        ///     Applies Auto Mode the same way the tray menu does (it owns the taskbar side effects).
-        /// </param>
-        public SettingsForm(Action<bool> setAutoMode)
+        private static readonly string[] TabNames = { "Main", "Animation", "Style", "Startup" };
+
+        private readonly Action<bool> _setEnabled;
+        private readonly Action<bool> _setAutoMode;
+        private readonly List<Action> _pageLayouts = new();
+        private readonly Label _titleLabel;
+        private readonly Label _lblStatus;
+        private readonly TabStrip _tabs;
+        private readonly Panel[] _pages;
+
+        private bool _layoutReady;
+        private bool _suppress;
+        private CaptionButton _hoverButton = CaptionButton.None;
+        private CaptionButton _pressedButton = CaptionButton.None;
+
+        private ToggleSwitch _togEnabled = null!;
+        private ToggleSwitch _togAutoMain = null!;
+        private ToggleSwitch _togAutoStyle = null!;
+        private ToggleSwitch _togStartupMain = null!;
+        private ToggleSwitch _togStartupPage = null!;
+        private ToggleSwitch _togCenter = null!;
+        private ToggleSwitch _togAnimation = null!;
+        private ToggleSwitch _togShowOnExit = null!;
+
+        /// <param name="setEnabled">Applies the master switch (tray owns the taskbar side effects).</param>
+        /// <param name="setAutoMode">Applies Auto Mode the same way the tray menu does.</param>
+        public SettingsForm(Action<bool> setEnabled, Action<bool> setAutoMode)
         {
+            _setEnabled = setEnabled;
             _setAutoMode = setAutoMode;
 
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
             Text = "SmartTaskbar";
-            FormBorderStyle = FormBorderStyle.FixedSingle;
-            MaximizeBox = false;
-            MinimizeBox = true;
+            FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(760, 480);
+            MinimumSize = new Size(700, 520);
+            ClientSize = new Size(800, 620);
             BackColor = Win11Theme.Background;
             ForeColor = Win11Theme.TextPrimary;
             Font = Win11Theme.BodyFont;
             ShowInTaskbar = true;
             DoubleBuffered = true;
+            SetStyle(ControlStyles.ResizeRedraw, true);
 
             try
             {
@@ -71,14 +116,14 @@ namespace SmartTaskbar
             }
             catch { }
 
-            var title = new Label
+            _titleLabel = new Label
             {
                 Text = "SmartTaskbar",
                 Font = Win11Theme.TitleFont,
                 ForeColor = Win11Theme.TextPrimary,
                 BackColor = Win11Theme.Background,
                 AutoSize = true,
-                Location = new Point(Inset, 20)
+                Location = new Point(Inset, TitleTop)
             };
 
             _lblStatus = new Label
@@ -87,13 +132,11 @@ namespace SmartTaskbar
                 ForeColor = Win11Theme.TextSecondary,
                 BackColor = Win11Theme.Background,
                 AutoSize = true,
-                Location = new Point(Inset, 62)
+                Location = new Point(Inset, StatusTop)
             };
 
             _tabs = new TabStrip
             {
-                Location = new Point(0, TabTop),
-                Size = new Size(ClientSize.Width, TabHeight),
                 LeftInset = Inset,
                 AccessibleName = "Settings sections"
             };
@@ -108,14 +151,16 @@ namespace SmartTaskbar
                 BuildStartupPage()
             };
 
-            Controls.Add(title);
+            Controls.Add(_titleLabel);
             Controls.Add(_lblStatus);
             Controls.Add(_tabs);
             foreach (var page in _pages)
                 Controls.Add(page);
 
+            _layoutReady = true;
+            LayoutContent();
             ShowPage(_tabs.SelectedIndex);
-            LoadSettings();
+            SyncFromSettings();
 
             FormClosing += SettingsForm_FormClosing;
         }
@@ -125,47 +170,61 @@ namespace SmartTaskbar
         private Panel BuildMainPage()
         {
             var page = CreatePage();
-            page.Controls.Add(CreateSectionLabel("Taskbar", Inset, 8));
+            page.Controls.Add(CreateSectionLabel("Taskbar", 8));
 
-            var card = CreateCard(page, CardTop);
+            var card = CreateCard(page);
+            _togEnabled = card.AddRow(
+                "Enable SmartTaskbar",
+                "Turn SmartTaskbar's taskbar behavior on or off. When it's off, the taskbar stays visible.");
             _togAutoMain = card.AddRow(
                 "Auto Mode",
                 "Hide the taskbar automatically when the focused window overlaps it.");
             _togStartupMain = card.AddRow(
                 "Run at Windows startup",
-                "Start SmartTaskbar automatically when you sign in to Windows.");
+                "Start SmartTaskbar in the tray when you sign in to Windows.");
+            _togCenter = card.AddRow(
+                "Center taskbar icons",
+                TaskbarAlignmentHelper.IsSupported
+                    ? "Move the Start button and app icons to the middle of the taskbar."
+                    : "Windows 11 only. Windows 10 always aligns taskbar icons to the left.");
+            _togCenter.Enabled = TaskbarAlignmentHelper.IsSupported;
 
+            _togEnabled.CheckedChanged += (_, _) => OnEnabledToggled(_togEnabled.Checked);
             _togAutoMain.CheckedChanged += (_, _) => OnAutoModeToggled(_togAutoMain.Checked);
             _togStartupMain.CheckedChanged += (_, _) => OnStartupToggled(_togStartupMain.Checked);
+            _togCenter.CheckedChanged += (_, _) => OnCenterToggled(_togCenter.Checked);
 
-            page.Controls.Add(CreateInfoBar(
-                "Closing this window keeps SmartTaskbar running in the system tray. Double-click the tray icon to reopen it.",
-                Inset, card.Bottom + CardGap, card.Width));
-
+            var info = new InfoBar(
+                "Closing this window keeps SmartTaskbar running in the system tray. Double-click the tray icon to reopen it.");
+            page.Controls.Add(info);
+            RegisterPageLayout(page, card, info);
             return page;
         }
 
         private Panel BuildAnimationPage()
         {
             var page = CreatePage();
-            page.Controls.Add(CreateSectionLabel("Motion", Inset, 8));
+            page.Controls.Add(CreateSectionLabel("Motion", 8));
 
-            var card = CreateCard(page, CardTop);
+            var card = CreateCard(page);
             _togAnimation = card.AddRow(
                 "Taskbar animation",
                 "Turn the Windows taskbar animation effects on or off.");
-
             _togAnimation.CheckedChanged += (_, _) => OnAnimationToggled(_togAnimation.Checked);
 
+            var info = new InfoBar(
+                "Windows only lets apps turn the taskbar animation on or off. Choosing an easing curve (ease in, ease out, bounce) needs a hook into Explorer, which this version does not include.");
+            page.Controls.Add(info);
+            RegisterPageLayout(page, card, info);
             return page;
         }
 
         private Panel BuildStylePage()
         {
             var page = CreatePage();
-            page.Controls.Add(CreateSectionLabel("Behavior", Inset, 8));
+            page.Controls.Add(CreateSectionLabel("Behavior", 8));
 
-            var card = CreateCard(page, CardTop);
+            var card = CreateCard(page);
             _togAutoStyle = card.AddRow(
                 "Auto Mode",
                 "Hide the taskbar when the focused window intersects it.");
@@ -176,114 +235,69 @@ namespace SmartTaskbar
             _togAutoStyle.CheckedChanged += (_, _) => OnAutoModeToggled(_togAutoStyle.Checked);
             _togShowOnExit.CheckedChanged += (_, _) => OnShowOnExitToggled(_togShowOnExit.Checked);
 
+            RegisterPageLayout(page, card, null);
             return page;
         }
 
         private Panel BuildStartupPage()
         {
             var page = CreatePage();
-            page.Controls.Add(CreateSectionLabel("Launch", Inset, 8));
+            page.Controls.Add(CreateSectionLabel("Launch", 8));
 
-            var card = CreateCard(page, CardTop);
+            var card = CreateCard(page);
             _togStartupPage = card.AddRow(
                 "Run at Windows startup",
-                "Start SmartTaskbar automatically when you sign in.");
-
+                "Start SmartTaskbar in the tray when you sign in. The settings window stays closed.");
             _togStartupPage.CheckedChanged += (_, _) => OnStartupToggled(_togStartupPage.Checked);
 
-            page.Controls.Add(CreateInfoBar(
-                "Stored in the current-user Run key (HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run). No administrator rights are needed.",
-                Inset, card.Bottom + CardGap, card.Width));
-
+            var info = new InfoBar(
+                "Stored in the current-user Run key (HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run). No administrator rights are needed.");
+            page.Controls.Add(info);
+            RegisterPageLayout(page, card, info);
             return page;
         }
 
         private Panel CreatePage() => new Panel
         {
-            Location = new Point(0, PageTop),
-            Size = new Size(ClientSize.Width, ClientSize.Height - PageTop),
             BackColor = Win11Theme.Background,
+            AutoScroll = true,
             Visible = false
         };
 
-        private static SettingsCard CreateCard(Panel page, int top)
+        private SettingsCard CreateCard(Panel page)
         {
-            var card = new SettingsCard
-            {
-                Location = new Point(Inset, top),
-                Width = page.ClientSize.Width - Inset * 2
-            };
+            var card = new SettingsCard { Location = new Point(Inset, CardTop) };
             page.Controls.Add(card);
             return card;
         }
 
-        private static Label CreateSectionLabel(string text, int x, int y) => new Label
+        private static Label CreateSectionLabel(string text, int y) => new Label
         {
             Text = text,
             Font = Win11Theme.SectionFont,
             ForeColor = Win11Theme.TextPrimary,
             BackColor = Win11Theme.Background,
             AutoSize = true,
-            Location = new Point(x, y)
+            Location = new Point(Inset, y)
         };
 
         /// <summary>
-        ///     Rounded info bar with an accent info glyph, in the style of Windows 11 info bars.
+        ///     Registers how a page's card and info bar stretch with the window.
         /// </summary>
-        private static Panel CreateInfoBar(string message, int x, int y, int width)
+        private void RegisterPageLayout(Panel page, SettingsCard card, InfoBar? info)
         {
-            const int IconWidth = 20;
-            const int IconLeft = 16;
-            const int TextLeft = 44;
-            const int TextRight = 16;
-            const int PadY = 12;
-
-            int textWidth = width - TextLeft - TextRight;
-            int textHeight = TextRenderer.MeasureText(
-                message,
-                Win11Theme.BodyFont,
-                new Size(textWidth, int.MaxValue),
-                TextFormatFlags.WordBreak | TextFormatFlags.NoPadding).Height;
-
-            int height = Math.Max(48, textHeight + PadY * 2);
-
-            var bar = new Panel
+            _pageLayouts.Add(() =>
             {
-                Location = new Point(x, y),
-                Size = new Size(width, height),
-                BackColor = Win11Theme.Background
-            };
+                int width = Math.Max(200, page.ClientSize.Width - Inset * 2);
+                card.Location = new Point(Inset, CardTop);
+                card.Width = width;
 
-            bar.Paint += (_, e) =>
-            {
-                e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-                using var path = Win11Theme.RoundedRectangle(new RectangleF(0F, 0F, bar.Width - 1F, bar.Height - 1F), 8F);
-                using var brush = new SolidBrush(Win11Theme.Surface);
-                e.Graphics.FillPath(brush, path);
-            };
-
-            bar.Controls.Add(new Label
-            {
-                Text = "\uE946", // Segoe MDL2 Assets: Info
-                Font = Win11Theme.IconFont,
-                ForeColor = Win11Theme.Accent,
-                BackColor = Win11Theme.Surface,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Location = new Point(IconLeft, 0),
-                Size = new Size(IconWidth, height)
+                if (info != null)
+                {
+                    info.Fit(width);
+                    info.Location = new Point(Inset, card.Bottom + CardGap);
+                }
             });
-
-            bar.Controls.Add(new Label
-            {
-                Text = message,
-                Font = Win11Theme.BodyFont,
-                ForeColor = Win11Theme.TextPrimary,
-                BackColor = Win11Theme.Surface,
-                Location = new Point(TextLeft, PadY),
-                Size = new Size(textWidth, textHeight)
-            });
-
-            return bar;
         }
 
         private void ShowPage(int index)
@@ -292,30 +306,299 @@ namespace SmartTaskbar
                 _pages[i].Visible = i == index;
         }
 
+        // ===== Layout =====
+
+        private void LayoutContent()
+        {
+            if (!_layoutReady) return;
+
+            _tabs.SetBounds(0, TabTop, ClientSize.Width, TabHeight);
+
+            int pageHeight = Math.Max(1, ClientSize.Height - PageTop);
+            foreach (var page in _pages)
+                page.SetBounds(0, PageTop, ClientSize.Width, pageHeight);
+
+            foreach (var layout in _pageLayouts)
+                layout();
+
+            Invalidate();
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            LayoutContent();
+        }
+
+        // ===== Borderless window: frame, resize, drag and maximize =====
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                // Keep the resizable frame (for edge resizing and Aero Snap) and add a drop shadow.
+                // The non-client area is removed in WM_NCCALCSIZE, so no default title bar is drawn.
+                CreateParams cp = base.CreateParams;
+                cp.Style |= WsThickFrame | WsMinimizeBox | WsMaximizeBox;
+                cp.ClassStyle |= CsDropShadow;
+                return cp;
+            }
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            switch (m.Msg)
+            {
+                case WmNcCalcSize when m.WParam != IntPtr.Zero:
+                    // Client area = whole window. When maximized, fit inside the work area (no overhang).
+                    ConstrainToWorkArea(m.LParam);
+                    m.Result = IntPtr.Zero;
+                    return;
+
+                case WmNcHitTest:
+                    m.Result = (IntPtr)HitTestNonClient(PointToClient(LParamToPoint(m.LParam)));
+                    return;
+
+                case WmNcMouseMove:
+                    ClearCaptionHover();
+                    break;
+
+                case WmNcLButtonDblClk when m.WParam.ToInt32() == HtCaption:
+                    ToggleMaximize();
+                    return;
+            }
+
+            base.WndProc(ref m);
+        }
+
+        private void ConstrainToWorkArea(IntPtr lParam)
+        {
+            if (WindowState != FormWindowState.Maximized) return;
+
+            var rect = Marshal.PtrToStructure<NativeRect>(lParam);
+            Rectangle work = Screen.FromHandle(Handle).WorkingArea;
+            rect.Left = work.Left;
+            rect.Top = work.Top;
+            rect.Right = work.Right;
+            rect.Bottom = work.Bottom;
+            Marshal.StructureToPtr(rect, lParam, false);
+        }
+
+        private int HitTestNonClient(Point p)
+        {
+            if (WindowState != FormWindowState.Maximized)
+            {
+                bool left = p.X < ResizeBorder;
+                bool right = p.X >= ClientSize.Width - ResizeBorder;
+                bool top = p.Y < ResizeBorder;
+                bool bottom = p.Y >= ClientSize.Height - ResizeBorder;
+
+                if (top && left) return HtTopLeft;
+                if (top && right) return HtTopRight;
+                if (bottom && left) return HtBottomLeft;
+                if (bottom && right) return HtBottomRight;
+                if (left) return HtLeft;
+                if (right) return HtRight;
+                if (top) return HtTop;
+                if (bottom) return HtBottom;
+            }
+
+            // Empty title bar area drags the window; caption buttons stay clickable as client area.
+            if (p.Y < CaptionHeight && CaptionButtonAt(p) == CaptionButton.None)
+                return HtCaption;
+
+            return HtClient;
+        }
+
+        private static Point LParamToPoint(IntPtr lParam)
+        {
+            long value = lParam.ToInt64();
+            return new Point(unchecked((short)(value & 0xFFFF)),
+                             unchecked((short)((value >> 16) & 0xFFFF)));
+        }
+
+        private void ToggleMaximize()
+            => WindowState = WindowState == FormWindowState.Maximized
+                ? FormWindowState.Normal
+                : FormWindowState.Maximized;
+
+        // ===== Caption bar (title + min / max / close) =====
+
+        private Rectangle CaptionButtonBounds(CaptionButton button)
+        {
+            int slot = button switch
+            {
+                CaptionButton.Maximize => 1,
+                CaptionButton.Minimize => 2,
+                _ => 0
+            };
+
+            return new Rectangle(ClientSize.Width - CaptionButtonWidth * (slot + 1), 0,
+                                 CaptionButtonWidth, CaptionHeight);
+        }
+
+        private CaptionButton CaptionButtonAt(Point p)
+        {
+            if (p.Y < 0 || p.Y >= CaptionHeight) return CaptionButton.None;
+
+            foreach (CaptionButton button in new[] { CaptionButton.Minimize, CaptionButton.Maximize, CaptionButton.Close })
+            {
+                if (CaptionButtonBounds(button).Contains(p))
+                    return button;
+            }
+            return CaptionButton.None;
+        }
+
+        private void InvalidateCaption()
+            => Invalidate(new Rectangle(0, 0, ClientSize.Width, CaptionHeight));
+
+        private void ClearCaptionHover()
+        {
+            if (_hoverButton == CaptionButton.None && _pressedButton == CaptionButton.None) return;
+
+            _hoverButton = CaptionButton.None;
+            _pressedButton = CaptionButton.None;
+            InvalidateCaption();
+        }
+
+        private void RunCaptionButton(CaptionButton button)
+        {
+            switch (button)
+            {
+                case CaptionButton.Minimize:
+                    WindowState = FormWindowState.Minimized;
+                    break;
+                case CaptionButton.Maximize:
+                    ToggleMaximize();
+                    break;
+                case CaptionButton.Close:
+                    Close(); // FormClosing hides the window; the tray keeps running.
+                    break;
+            }
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            CaptionButton hover = CaptionButtonAt(e.Location);
+            if (hover != _hoverButton)
+            {
+                _hoverButton = hover;
+                InvalidateCaption();
+            }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            ClearCaptionHover();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                _pressedButton = CaptionButtonAt(e.Location);
+                InvalidateCaption();
+            }
+            base.OnMouseDown(e);
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Left && _pressedButton != CaptionButton.None)
+            {
+                CaptionButton pressed = _pressedButton;
+                CaptionButton released = CaptionButtonAt(e.Location);
+
+                _pressedButton = CaptionButton.None;
+                InvalidateCaption();
+
+                if (released == pressed)
+                    RunCaptionButton(pressed);
+            }
+            base.OnMouseUp(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            base.OnPaint(e);
+
+            Graphics g = e.Graphics;
+            Icon?.Draw(g, new Rectangle(12, (CaptionHeight - 16) / 2, 16, 16));
+
+            TextRenderer.DrawText(g, "SmartTaskbar", Win11Theme.CaptionFont,
+                                  new Rectangle(36, 0, 240, CaptionHeight),
+                                  Win11Theme.TextSecondary,
+                                  TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                                  | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+
+            DrawCaptionButton(g, CaptionButton.Minimize, "\uE921");
+            DrawCaptionButton(g, CaptionButton.Maximize,
+                              WindowState == FormWindowState.Maximized ? "\uE923" : "\uE922");
+            DrawCaptionButton(g, CaptionButton.Close, "\uE8BB");
+        }
+
+        private void DrawCaptionButton(Graphics g, CaptionButton button, string glyph)
+        {
+            Rectangle rect = CaptionButtonBounds(button);
+            bool hovered = _hoverButton == button;
+            bool pressed = hovered && _pressedButton == button;
+
+            Color? fill = null;
+            if (button == CaptionButton.Close)
+            {
+                if (pressed) fill = Color.FromArgb(0xA0, 0x2A, 0x1E);
+                else if (hovered) fill = Color.FromArgb(0xC4, 0x2B, 0x1C);
+            }
+            else if (hovered)
+            {
+                fill = pressed ? Color.FromArgb(50, 50, 50) : Color.FromArgb(45, 45, 45);
+            }
+
+            if (fill.HasValue)
+            {
+                using var brush = new SolidBrush(fill.Value);
+                g.FillRectangle(brush, rect);
+            }
+
+            TextRenderer.DrawText(g, glyph, Win11Theme.IconFont, rect, Win11Theme.TextPrimary,
+                                  TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter
+                                  | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding);
+        }
+
         // ===== Change handlers =====
+
+        private void OnEnabledToggled(bool enabled)
+        {
+            if (_suppress) return;
+
+            _setEnabled(enabled);
+            SyncFromSettings();
+        }
 
         private void OnAutoModeToggled(bool enabled)
         {
             if (_suppress) return;
 
-            try
-            {
-                _setAutoMode(enabled);
-            }
-            catch
-            {
-                // The tray is responsible for the taskbar side effects; fall through and re-sync.
-            }
-
-            SetAutoModeUi(UserSettings.AutoModeType == AutoModeType.Auto);
+            _setAutoMode(enabled);
+            SyncFromSettings();
         }
 
         private void OnStartupToggled(bool enabled)
         {
             if (_suppress) return;
 
-            bool written = StartupHelper.SetRunAtStartup(enabled);
-            SetStartupUi(written ? enabled : StartupHelper.IsRunAtStartup());
+            StartupHelper.SetRunAtStartup(enabled);
+            SyncFromSettings();   // re-reads the registry, so a failed write reverts the switch
+        }
+
+        private void OnCenterToggled(bool enabled)
+        {
+            if (_suppress) return;
+
+            TaskbarAlignmentHelper.SetCentered(enabled);
+            SyncFromSettings();
         }
 
         private void OnAnimationToggled(bool enabled)
@@ -325,8 +608,7 @@ namespace SmartTaskbar
             if (enabled != Fun.IsEnableTaskbarAnimation())
                 Fun.ChangeTaskbarAnimation();
 
-            bool actual = Fun.IsEnableTaskbarAnimation();
-            WithSuppressed(() => _togAnimation.Checked = actual);
+            SyncFromSettings();
         }
 
         private void OnShowOnExitToggled(bool enabled)
@@ -338,59 +620,57 @@ namespace SmartTaskbar
 
         // ===== State sync =====
 
-        private void SetAutoModeUi(bool autoOn)
-        {
-            WithSuppressed(() =>
-            {
-                _togAutoMain.Checked = autoOn;
-                _togAutoStyle.Checked = autoOn;
-            });
-            UpdateStatus(autoOn);
-        }
-
-        private void SetStartupUi(bool startupOn)
-        {
-            WithSuppressed(() =>
-            {
-                _togStartupMain.Checked = startupOn;
-                _togStartupPage.Checked = startupOn;
-            });
-        }
-
-        private void UpdateStatus(bool autoOn)
-        {
-            _lblStatus.Text = autoOn ? "Auto Mode is on" : "Auto Mode is off";
-            _lblStatus.ForeColor = autoOn ? Win11Theme.Accent : Win11Theme.TextSecondary;
-        }
-
         /// <summary>
-        ///     Reads the current settings (registry, UserSettings, system animation) into the controls
-        ///     without triggering any writes.
+        ///     Reads every setting (UserSettings, registry, system animation) into the controls
+        ///     without triggering writes.
         /// </summary>
-        private void LoadSettings()
+        private void SyncFromSettings()
         {
             try
             {
+                bool enabled = UserSettings.Enabled;
                 bool autoOn = UserSettings.AutoModeType == AutoModeType.Auto;
                 bool startupOn = StartupHelper.IsRunAtStartup();
+                bool centered = TaskbarAlignmentHelper.IsCentered();
                 bool animationOn = Fun.IsEnableTaskbarAnimation();
                 bool showOnExit = UserSettings.ShowTaskbarWhenExit;
 
                 WithSuppressed(() =>
                 {
+                    _togEnabled.Checked = enabled;
                     _togAutoMain.Checked = autoOn;
                     _togAutoStyle.Checked = autoOn;
                     _togStartupMain.Checked = startupOn;
                     _togStartupPage.Checked = startupOn;
+                    _togCenter.Checked = centered;
                     _togAnimation.Checked = animationOn;
                     _togShowOnExit.Checked = showOnExit;
                 });
 
-                UpdateStatus(autoOn);
+                UpdateStatus(enabled, autoOn);
             }
             catch
             {
                 // Keep the window usable even if a system query fails.
+            }
+        }
+
+        private void UpdateStatus(bool enabled, bool autoOn)
+        {
+            if (!enabled)
+            {
+                _lblStatus.Text = "SmartTaskbar is off";
+                _lblStatus.ForeColor = Win11Theme.TextSecondary;
+            }
+            else if (autoOn)
+            {
+                _lblStatus.Text = "Auto Mode is on";
+                _lblStatus.ForeColor = Win11Theme.Accent;
+            }
+            else
+            {
+                _lblStatus.Text = "Auto Mode is off";
+                _lblStatus.ForeColor = Win11Theme.TextSecondary;
             }
         }
 
@@ -411,7 +691,7 @@ namespace SmartTaskbar
         /// <summary>
         ///     Called by the tray when a setting changes while this window is open.
         /// </summary>
-        public void RefreshState() => LoadSettings();
+        public void RefreshState() => SyncFromSettings();
 
         // ===== Window behavior =====
 
@@ -433,14 +713,14 @@ namespace SmartTaskbar
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
-            LoadSettings();
+            SyncFromSettings();
             BringToFront();
             Activate();
         }
 
         /// <summary>
-        ///     Dark title bar, rounded window corners and matching caption color on Windows 11.
-        ///     Each attribute is optional, so older builds simply keep the default chrome.
+        ///     Dark mode for system parts (scrollbars, menus) and rounded corners on Windows 11.
+        ///     Each attribute is optional, so older builds ignore it.
         /// </summary>
         private void ApplyWindowChrome()
         {
@@ -452,13 +732,10 @@ namespace SmartTaskbar
 
                 int corner = DwmwcpRound;
                 DwmSetWindowAttribute(Handle, DwmwaWindowCornerPreference, ref corner, sizeof(int));
-
-                int caption = ColorTranslator.ToWin32(Win11Theme.Background);
-                DwmSetWindowAttribute(Handle, DwmwaCaptionColor, ref caption, sizeof(int));
             }
             catch
             {
-                // Non-fatal: the window still works with the default title bar.
+                // Non-fatal: the window works without these attributes.
             }
         }
     }

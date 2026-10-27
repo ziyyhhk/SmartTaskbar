@@ -46,7 +46,7 @@ namespace SmartTaskbar
                     || string.Equals(Path.GetFileNameWithoutExtension(exePath), "dotnet", StringComparison.OrdinalIgnoreCase))
                     return false;
 
-                key.SetValue(AppName, $"\"{exePath}\"");
+                key.SetValue(AppName, $"\"{exePath}\" --tray");
                 return true;
             }
             catch

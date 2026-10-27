@@ -32,7 +32,7 @@ namespace SmartTaskbar
 
         private static void Timer_Tick(object? sender, EventArgs e)
         {
-            if (UserSettings.AutoModeType != AutoModeType.Auto)
+            if (!UserSettings.Enabled || UserSettings.AutoModeType != AutoModeType.Auto)
                 return;
 
             // get taskbar every 1.25 second.

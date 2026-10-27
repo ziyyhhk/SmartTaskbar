@@ -14,6 +14,7 @@ namespace SmartTaskbar
                 using var key = Registry.CurrentUser.OpenSubKey(RegPath, false);
                 var autoMode = key?.GetValue(nameof(UserConfiguration.AutoModeType)) as string;
                 var showExit = key?.GetValue(nameof(UserConfiguration.ShowTaskbarWhenExit));
+                var enabled = key?.GetValue(nameof(UserConfiguration.Enabled));
 
                 _userConfiguration = new UserConfiguration
                 {
@@ -24,7 +25,8 @@ namespace SmartTaskbar
                         ? i != 0
                         : showExit is bool b
                             ? b
-                            : true
+                            : true,
+                    Enabled = enabled is int e ? e != 0 : true
                 };
             }
             catch
@@ -32,8 +34,22 @@ namespace SmartTaskbar
                 _userConfiguration = new UserConfiguration
                 {
                     AutoModeType = AutoModeType.Auto,
-                    ShowTaskbarWhenExit = true
+                    ShowTaskbarWhenExit = true,
+                    Enabled = true
                 };
+            }
+        }
+
+        public static bool Enabled
+        {
+            get => _userConfiguration.Enabled;
+            set
+            {
+                if (value == _userConfiguration.Enabled)
+                    return;
+
+                _userConfiguration.Enabled = value;
+                WriteValue(nameof(UserConfiguration.Enabled), value ? 1 : 0);
             }
         }
 

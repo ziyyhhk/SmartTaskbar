@@ -164,7 +164,7 @@ namespace SmartTaskbar
             }
 
             // Focus cue for keyboard users: a thin outline around the active tab.
-            if (Focused && _selected >= 0 && _selected < _items.Count)
+            if (Focused && ShowFocusCues && _selected >= 0 && _selected < _items.Count)
             {
                 Rectangle r = ItemRect(_selected);
                 var ring = new RectangleF(r.X + 0.5F, r.Y + HoverInsetY + 0.5F, r.Width - 1F, r.Height - HoverInsetY * 2 - 1F);

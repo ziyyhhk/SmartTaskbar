@@ -1,4 +1,4 @@
-﻿namespace SmartTaskbar
+namespace SmartTaskbar
 {
     /// <summary>
     ///     User settings configuration
@@ -14,5 +14,10 @@
         ///     Show taskbar when exiting
         /// </summary>
         public bool ShowTaskbarWhenExit { get; set; }
+
+        /// <summary>
+        ///     Master switch: when false, SmartTaskbar leaves the taskbar alone
+        /// </summary>
+        public bool Enabled { get; set; }
     }
 }

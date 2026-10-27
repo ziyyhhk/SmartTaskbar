@@ -23,7 +23,7 @@ namespace SmartTaskbar
         private readonly ToolStripMenuItem _showBarOnExit;
         private SettingsForm? _settingsForm;
 
-        public SystemTray()
+        public SystemTray(bool showSettingsOnLaunch = true)
         {
             #region Initialization
 
@@ -100,14 +100,17 @@ namespace SmartTaskbar
 
             #endregion
 
-            // Open settings GUI on launch (after tray is ready)
-            try
+            // Open settings GUI on launch (after tray is ready), unless started with --tray
+            if (showSettingsOnLaunch)
             {
-                ShowSettings();
-            }
-            catch
-            {
-                // Never crash the tray if the form fails
+                try
+                {
+                    ShowSettings();
+                }
+                catch
+                {
+                    // Never crash the tray if the form fails
+                }
             }
         }
 
@@ -119,7 +122,7 @@ namespace SmartTaskbar
             {
                 if (_settingsForm is null || _settingsForm.IsDisposed)
                 {
-                    _settingsForm = new SettingsForm(ApplyAutoMode);
+                    _settingsForm = new SettingsForm(ApplyEnabled, ApplyAutoMode);
                 }
 
                 if (_settingsForm.Visible)
@@ -266,6 +269,17 @@ namespace SmartTaskbar
             }
 
             _autoMode.Checked = enabled;
+        }
+
+        /// <summary>
+        ///     Master switch. Turning it off stops the engine and restores a normal, visible taskbar.
+        /// </summary>
+        private void ApplyEnabled(bool enabled)
+        {
+            UserSettings.Enabled = enabled;
+
+            if (!enabled)
+                Fun.CancelAutoHide();
         }
 
         private void AnimationInBarOnClick(object? s, EventArgs e)

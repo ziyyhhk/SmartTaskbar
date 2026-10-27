@@ -179,7 +179,7 @@ namespace SmartTaskbar
                          : Win11Theme.ToggleBorder;
 
             Color fill = Win11Theme.Mix(BackColor, accent, t);
-            Color stroke = Focused ? Win11Theme.FocusRing : Win11Theme.Mix(border, accent, t);
+            Color stroke = Focused && ShowFocusCues ? Win11Theme.FocusRing : Win11Theme.Mix(border, accent, t);
 
             var trackRect = new RectangleF(0.5F, 0.5F, Width - 1F, Height - 1F);
             using (var path = Win11Theme.RoundedRectangle(trackRect, trackRect.Height / 2F))
