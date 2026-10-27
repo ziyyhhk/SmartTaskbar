@@ -7,5 +7,6 @@ namespace SmartTaskbar
         Action<bool> SetEnabled,
         Action<bool> SetAutoMode,
         Action<bool> SetCenter,
-        Action ApplyCenterOptions);
+        Action ApplyCenterOptions,
+        Func<string> GetCenterStatus);
 }

@@ -89,10 +89,14 @@ namespace SmartTaskbar
         private ToggleSwitch _togShowOnExit = null!;
         private ComboBox _easingCombo = null!;
         private ComboBox _speedCombo = null!;
+        private InfoBar _centerInfo = null!;
+        private readonly System.Windows.Forms.Timer _statusTimer;
 
         public SettingsForm(TaskbarActions actions)
         {
             _actions = actions;
+            _statusTimer = new System.Windows.Forms.Timer { Interval = 1000 };
+            _statusTimer.Tick += (_, _) => UpdateCenterStatus();
 
             AutoScaleDimensions = new SizeF(96F, 96F);
             AutoScaleMode = AutoScaleMode.Dpi;
@@ -194,7 +198,11 @@ namespace SmartTaskbar
             var info = new InfoBar(
                 "Closing this window keeps SmartTaskbar running in the system tray. Double-click the tray icon to reopen it.");
             page.Controls.Add(info);
-            RegisterPageLayout(page, card, info);
+
+            _centerInfo = new InfoBar("");
+            page.Controls.Add(_centerInfo);
+
+            RegisterPageLayout(page, card, info, _centerInfo);
             return page;
         }
 
@@ -251,7 +259,7 @@ namespace SmartTaskbar
             _togAutoStyle.CheckedChanged += (_, _) => OnAutoModeToggled(_togAutoStyle.Checked);
             _togShowOnExit.CheckedChanged += (_, _) => OnShowOnExitToggled(_togShowOnExit.Checked);
 
-            RegisterPageLayout(page, card, null);
+            RegisterPageLayout(page, card);
             return page;
         }
 
@@ -298,9 +306,9 @@ namespace SmartTaskbar
         };
 
         /// <summary>
-        ///     Registers how a page's card and info bar stretch with the window.
+        ///     Registers how a page's card and info bars stretch with the window. Info bars stack below the card.
         /// </summary>
-        private void RegisterPageLayout(Panel page, SettingsCard card, InfoBar? info)
+        private void RegisterPageLayout(Panel page, SettingsCard card, params InfoBar[] infos)
         {
             _pageLayouts.Add(() =>
             {
@@ -308,10 +316,12 @@ namespace SmartTaskbar
                 card.Location = new Point(Inset, CardTop);
                 card.Width = width;
 
-                if (info != null)
+                int y = card.Bottom + CardGap;
+                foreach (var info in infos)
                 {
                     info.Fit(width);
-                    info.Location = new Point(Inset, card.Bottom + CardGap);
+                    info.Location = new Point(Inset, y);
+                    y = info.Bottom + 8;
                 }
             });
         }
@@ -691,6 +701,7 @@ namespace SmartTaskbar
                 });
 
                 UpdateStatus(enabled, autoOn);
+                UpdateCenterStatus();
             }
             catch
             {
@@ -715,6 +726,18 @@ namespace SmartTaskbar
                 _lblStatus.Text = "Auto Mode is off";
                 _lblStatus.ForeColor = Win11Theme.TextSecondary;
             }
+        }
+
+        /// <summary>
+        ///     Shows what the Windows 10 centering engine is doing (or why it can't).
+        /// </summary>
+        private void UpdateCenterStatus()
+        {
+            if (_centerInfo is null) return;
+
+            _centerInfo.SetText(TaskbarAlignmentHelper.IsSupported
+                ? "Windows 11 uses the native Taskbar alignment setting."
+                : "Centering status: " + _actions.GetCenterStatus());
         }
 
         private void WithSuppressed(Action action)
@@ -743,6 +766,7 @@ namespace SmartTaskbar
             if (e.CloseReason == CloseReason.UserClosing)
             {
                 e.Cancel = true;
+                _statusTimer.Stop();
                 Hide();
             }
         }
@@ -757,6 +781,7 @@ namespace SmartTaskbar
         {
             base.OnShown(e);
             SyncFromSettings();
+            _statusTimer.Start();
             BringToFront();
             Activate();
         }

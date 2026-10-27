@@ -17,6 +17,7 @@ namespace SmartTaskbar
 
         private readonly Label _icon;
         private readonly Label _text;
+        private int _width = 480;
 
         public InfoBar(string message)
         {
@@ -48,10 +49,21 @@ namespace SmartTaskbar
         }
 
         /// <summary>
+        ///     Replaces the message and re-wraps it at the current width.
+        /// </summary>
+        public void SetText(string message)
+        {
+            if (_text.Text == message) return;
+            _text.Text = message;
+            Fit(_width);
+        }
+
+        /// <summary>
         ///     Resizes the bar to a width and re-wraps its text.
         /// </summary>
         public void Fit(int width)
         {
+            _width = width;
             int textWidth = Math.Max(1, width - TextLeft - TextRight);
             int textHeight = TextRenderer.MeasureText(
                 _text.Text,

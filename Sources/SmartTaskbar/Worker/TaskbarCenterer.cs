@@ -5,9 +5,9 @@ using Timer = System.Windows.Forms.Timer;
 namespace SmartTaskbar
 {
     /// <summary>
-    ///     Easing curves for the icon-centering animation.
+    ///     Easing curves for the icon-centering animation. Public because UserSettings exposes it.
     /// </summary>
-    internal enum CenterEasing
+    public enum CenterEasing
     {
         Linear,
         EaseIn,
@@ -80,6 +80,7 @@ namespace SmartTaskbar
     ///     Windows 10 icon centering. Moves the taskbar's task-list window to the middle of the screen
     ///     and eases it there. Explorer resets the layout when icons change, so the position is re-checked
     ///     every tick. Stopping restores the original position. Windows 11 uses its native alignment instead.
+    ///     <see cref="Status" /> explains what it is doing, which helps when reporting a problem.
     /// </summary>
     internal sealed class TaskbarCenterer
     {
@@ -95,6 +96,10 @@ namespace SmartTaskbar
         private const int TickMs = 15;
         private const int RefreshMs = 500;
         private const int ExplorerMoveToleranceX = 2;
+
+        private enum LayoutState { Ok, Vertical, Unreadable, TooWide }
+
+        private readonly record struct TaskbarLayout(int TargetX, int CurrentX, int Y, int MaxX, int ListWidth);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct WinRect
@@ -147,6 +152,11 @@ namespace SmartTaskbar
             _timer.Tick += (_, _) => Tick();
         }
 
+        /// <summary>
+        ///     Human-readable state, shown in the settings window.
+        /// </summary>
+        public string Status { get; private set; } = "Off";
+
         public bool IsRunning => _timer.Enabled;
 
         public void Configure(CenterEasing easing, int durationMs)
@@ -157,8 +167,10 @@ namespace SmartTaskbar
 
         public void Start()
         {
-            if (!_timer.Enabled)
-                _timer.Start();
+            if (_timer.Enabled) return;
+
+            Status = "Starting...";
+            _timer.Start();
         }
 
         /// <summary>
@@ -168,6 +180,7 @@ namespace SmartTaskbar
         {
             _timer.Stop();
             RestoreOriginal();
+            Status = "Off";
         }
 
         private void Tick()
@@ -182,21 +195,31 @@ namespace SmartTaskbar
                     ResolveWindows();
                 }
 
-                if (!TryGetLayout(out int targetX, out int currentX, out int y, out int maxX))
+                if (_taskList == IntPtr.Zero || _taskSw == IntPtr.Zero)
+                {
+                    Status = "Taskbar icon list not found. Windows 10 layout was not detected.";
                     return;
+                }
+
+                LayoutState state = ReadLayout(out TaskbarLayout layout);
+                if (state != LayoutState.Ok)
+                {
+                    Status = Describe(state);
+                    return;
+                }
 
                 if (!_captured)
                 {
-                    _originalX = currentX;
+                    _originalX = layout.CurrentX;
                     _captured = true;
                 }
 
-                if (!_hasTarget || targetX != _toX)
-                    BeginAnimation(currentX, targetX);
-                else if (_hasLastSet && Math.Abs(currentX - _lastSetX) > ExplorerMoveToleranceX)
-                    BeginAnimation(currentX, _toX);     // Explorer moved the icons: ease back
-                else if (!_animating && currentX != _toX)
-                    BeginAnimation(currentX, _toX);
+                if (!_hasTarget || layout.TargetX != _toX)
+                    BeginAnimation(layout.CurrentX, layout.TargetX);
+                else if (_hasLastSet && Math.Abs(layout.CurrentX - _lastSetX) > ExplorerMoveToleranceX)
+                    BeginAnimation(layout.CurrentX, _toX);     // Explorer moved the icons: ease back
+                else if (!_animating && layout.CurrentX != _toX)
+                    BeginAnimation(layout.CurrentX, _toX);
 
                 int x = _toX;
                 if (_animating)
@@ -213,13 +236,20 @@ namespace SmartTaskbar
                     }
                 }
 
-                x = Math.Clamp(x, 0, maxX);
-                if (x != currentX)
-                    MoveTo(x, y);
+                x = Math.Clamp(x, 0, layout.MaxX);
+                if (x != layout.CurrentX && !MoveTo(x, layout.Y))
+                {
+                    Status = $"Moving the icons failed (Windows error {Marshal.GetLastWin32Error()}).";
+                    return;
+                }
+
+                Status = _animating
+                    ? "Easing the icons into the center..."
+                    : $"Centered. Icon strip is {layout.ListWidth}px wide.";
             }
-            catch
+            catch (Exception ex)
             {
-                // Never let a window-layout problem crash the tray.
+                Status = "Error: " + ex.Message;
             }
         }
 
@@ -233,13 +263,14 @@ namespace SmartTaskbar
             _animating = _durationMs > 0 && from != to;
         }
 
-        private void MoveTo(int x, int y)
+        private bool MoveTo(int x, int y)
         {
             if (!SetWindowPos(_taskList, IntPtr.Zero, x, y, 0, 0, SwpNoSize | SwpNoZOrder | SwpNoActivate))
-                return;
+                return false;
 
             _lastSetX = x;
             _hasLastSet = true;
+            return true;
         }
 
         /// <summary>
@@ -249,7 +280,12 @@ namespace SmartTaskbar
         {
             IntPtr shell = FindWindow(ShellClass, null);
             IntPtr rebar = shell == IntPtr.Zero ? IntPtr.Zero : FindWindowEx(shell, IntPtr.Zero, RebarClass, null);
-            IntPtr taskSw = rebar == IntPtr.Zero ? IntPtr.Zero : FindWindowEx(rebar, IntPtr.Zero, TaskSwClass, null);
+
+            // Normally the task-band window lives inside the rebar; fall back to a direct child of the taskbar.
+            IntPtr taskSw = rebar != IntPtr.Zero ? FindWindowEx(rebar, IntPtr.Zero, TaskSwClass, null) : IntPtr.Zero;
+            if (taskSw == IntPtr.Zero && shell != IntPtr.Zero)
+                taskSw = FindWindowEx(shell, IntPtr.Zero, TaskSwClass, null);
+
             IntPtr taskList = taskSw == IntPtr.Zero ? IntPtr.Zero : FindWindowEx(taskSw, IntPtr.Zero, TaskListClass, null);
 
             if (taskList != _taskList)
@@ -269,37 +305,47 @@ namespace SmartTaskbar
         }
 
         /// <summary>
-        ///     Reads the taskbar layout and computes where the task list should sit to be centered on screen.
+        ///     Reads the taskbar layout and works out where the task list should sit to be centered on screen.
         /// </summary>
-        private bool TryGetLayout(out int targetX, out int currentX, out int y, out int maxX)
+        private LayoutState ReadLayout(out TaskbarLayout layout)
         {
-            targetX = currentX = y = maxX = 0;
+            layout = default;
 
-            if (!GetRect(_shell, out var shell) || !GetRect(_taskSw, out var sw) || !GetRect(_taskList, out var list))
-                return false;
+            if (!GetRect(_shell, out WinRect shell) || !GetRect(_taskSw, out WinRect sw) || !GetRect(_taskList, out WinRect list))
+                return LayoutState.Unreadable;
 
             // Only horizontal taskbars (bottom or top) are supported.
             if (shell.Right - shell.Left < shell.Bottom - shell.Top)
-                return false;
+                return LayoutState.Vertical;
 
             int listWidth = list.Right - list.Left;
-            maxX = (sw.Right - sw.Left) - listWidth;
+            int maxX = (sw.Right - sw.Left) - listWidth;
             if (maxX < 0)
-                return false;
+                return LayoutState.TooWide;
 
             Rectangle screen = Screen.FromHandle(_shell).Bounds;
             int desiredScreenLeft = screen.Left + (screen.Width - listWidth) / 2;
 
-            targetX = Math.Clamp(desiredScreenLeft - sw.Left, 0, maxX);
-            currentX = list.Left - sw.Left;
-            y = list.Top - sw.Top;
-            return true;
+            layout = new TaskbarLayout(
+                TargetX: Math.Clamp(desiredScreenLeft - sw.Left, 0, maxX),
+                CurrentX: list.Left - sw.Left,
+                Y: list.Top - sw.Top,
+                MaxX: maxX,
+                ListWidth: listWidth);
+            return LayoutState.Ok;
         }
+
+        private static string Describe(LayoutState state) => state switch
+        {
+            LayoutState.Vertical => "Only a bottom or top taskbar can be centered.",
+            LayoutState.TooWide => "The icons are wider than the taskbar, so they can't be centered.",
+            _ => "Could not read the taskbar window positions."
+        };
 
         private void RestoreOriginal()
         {
-            if (_captured && TryGetLayout(out _, out _, out int y, out int maxX))
-                MoveTo(Math.Clamp(_originalX, 0, maxX), y);
+            if (_captured && ReadLayout(out TaskbarLayout layout) == LayoutState.Ok)
+                MoveTo(Math.Clamp(_originalX, 0, layout.MaxX), layout.Y);
 
             ResetState();
         }

@@ -126,7 +126,7 @@ namespace SmartTaskbar
             {
                 if (_settingsForm is null || _settingsForm.IsDisposed)
                 {
-                    _settingsForm = new SettingsForm(new TaskbarActions(ApplyEnabled, ApplyAutoMode, SetCenter, ApplyCentering));
+                    _settingsForm = new SettingsForm(new TaskbarActions(ApplyEnabled, ApplyAutoMode, SetCenter, ApplyCentering, () => _centerer.Status));
                 }
 
                 if (_settingsForm.Visible)
