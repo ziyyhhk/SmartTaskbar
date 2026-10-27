@@ -119,7 +119,7 @@ namespace SmartTaskbar
             {
                 if (_settingsForm is null || _settingsForm.IsDisposed)
                 {
-                    _settingsForm = new SettingsForm();
+                    _settingsForm = new SettingsForm(ApplyAutoMode);
                 }
 
                 if (_settingsForm.Visible)
@@ -239,20 +239,46 @@ namespace SmartTaskbar
         }
 
         private void ShowBarOnExitOnClick(object? s, EventArgs e)
-            => UserSettings.ShowTaskbarWhenExit = !_showBarOnExit.Checked;
+        {
+            UserSettings.ShowTaskbarWhenExit = !_showBarOnExit.Checked;
+            RefreshSettingsWindow();
+        }
 
         private void AutoModeOnClick(object? s, EventArgs e)
         {
-            if (_autoMode.Checked)
+            ApplyAutoMode(!_autoMode.Checked);
+            RefreshSettingsWindow();
+        }
+
+        /// <summary>
+        ///     Single place that turns Auto Mode on or off. Used by the tray menu and the settings window.
+        /// </summary>
+        private void ApplyAutoMode(bool enabled)
+        {
+            if (enabled)
+            {
+                UserSettings.AutoModeType = AutoModeType.Auto;
+            }
+            else
             {
                 UserSettings.AutoModeType = AutoModeType.None;
                 HideBar();
             }
-            else { UserSettings.AutoModeType = AutoModeType.Auto; }
+
+            _autoMode.Checked = enabled;
         }
 
         private void AnimationInBarOnClick(object? s, EventArgs e)
-            => _animationInBar.Checked = Fun.ChangeTaskbarAnimation();
+        {
+            _animationInBar.Checked = Fun.ChangeTaskbarAnimation();
+            RefreshSettingsWindow();
+        }
+
+        private void RefreshSettingsWindow()
+        {
+            if (_settingsForm is { IsDisposed: false, Visible: true })
+                _settingsForm.RefreshState();
+        }
 
         private static async void Application_ApplicationExit(object? sender, EventArgs e)
         {
